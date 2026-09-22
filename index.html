@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polymarket 纸面组合 · 策略测试器</title>
+<style>
+  :root{ --bg:#131722; --panel:#1e222d; --border:#2a2e39; --text:#d1d4dc; --muted:#787b86;
+    --blue:#2962ff; --green:#26a69a; --red:#ef5350; --amber:#ffb74d; }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{background:var(--bg); color:var(--text); font:13px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; padding:14px 16px 30px;}
+  h1{font-size:16px; color:#fff; margin-bottom:2px;}
+  .sub{color:var(--muted); font-size:12px; margin-bottom:12px;}
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin-bottom:14px;}
+  .card{background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:10px 12px;}
+  .card .k{color:var(--muted); font-size:11px; margin-bottom:3px;}
+  .card .v{font-size:19px; font-weight:600; font-variant-numeric:tabular-nums;}
+  .card .s{color:var(--muted); font-size:11px;}
+  .up{color:var(--green);} .dn{color:var(--red);} .mut{color:var(--muted);} .am{color:var(--amber);}
+  table{width:100%; border-collapse:collapse; font-size:12px; font-variant-numeric:tabular-nums;}
+  .tblwrap{background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow-x:auto; margin-bottom:14px;}
+  th{color:var(--muted); font-weight:500; text-align:right; padding:8px 10px; border-bottom:1px solid var(--border); white-space:nowrap;}
+  td{padding:8px 10px; border-bottom:1px solid #22262f; text-align:right; white-space:nowrap;}
+  th:first-child, td:first-child, th.l, td.l{text-align:left;}
+  tr:hover td{background:#262b3a;}
+  .note{background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:14px; color:var(--muted); font-size:12px; line-height:1.9;}
+  .note b{color:var(--text);}
+  .bar{height:10px; background:#262b3a; border-radius:5px; overflow:hidden; display:inline-block; width:100px; vertical-align:middle;}
+  .bar i{display:block; height:100%;}
+  h2{font-size:14px; color:#fff; margin:6px 0 10px;}
+</style>
+</head>
+<body>
+<h1>Polymarket 纸面组合 · 策略测试器</h1>
+<div class="sub">零费翼 · 预测市场错价 · 纸面验证期(100U 虚拟银行) · 每仓 20U · 最多 5 仓 · 快照 <span id="upd"></span> · <span id="liveBadge" class="mut">实时价格加载中…</span>(持仓价格/浮盈/净值每 45 秒自动刷新;买入/结算仍由《PM纸面记账.bat》执行)</div>
+
+<div class="cards" id="cards"></div>
+
+<div class="note" id="scen"></div>
+
+<h2>已结算台账(历史战绩,钱已落袋/落失)</h2>
+<div class="tblwrap">
+<table id="histT">
+<thead><tr><th class="l">市场</th><th>方向</th><th>买价</th><th>投入</th><th>买入日</th><th>结算时间(北京)</th><th class="l">结果</th><th class="l">盈亏</th><th>累计已实现</th></tr></thead>
+<tbody></tbody>
+</table>
+</div>
+
+<h2>持仓明细(每仓:投入 / 到期 / 两情景 / 当前浮盈)</h2>
+<div class="tblwrap">
+<table id="posT">
+<thead><tr>
+  <th class="l">市场</th><th>方向</th><th>买入价</th><th>股数</th><th>投入</th><th>到期时间(北京)</th>
+  <th>当前价</th><th>当前浮盈</th><th class="l">状态</th><th class="l">赢了赚多少</th><th class="l">输了亏多少</th><th class="l">我的盈亏平衡价</th><th class="l">我的方向·现价(绿=对我有利)</th>
+</tr></thead>
+<tbody></tbody>
+</table>
+</div>
+
+<div class="note">
+  <b>怎么读"概率"两列:</b>都以<b>你的仓位方向</b>计(NO 仓显示的是 NO 侧的概率)。<b>盈亏平衡价 = 你的买价</b>(最终概率高于它你就赚);<b>现价 vs 买价的距离 = 你的浮盈</b>,绿条 = 市场在向你的方向移动,红条 = 在反向。<b>结算规则:</b>到期事件按你押的方向发生 → 每张券兑 1.00;反了 → 0。没有止损、没有爆仓,最大亏损 = 已投入的 20U/仓。<b>买入规则 v4.1(9-20 起,验尸 3 败后加):</b>①同侧铁律——只在现价已站在触发线安全一侧时下注,绝不赌穿越;②触价 NO 需离触发线 ≥3%(影线安全距离),触价 YES 需 ≤5%;③edge>30pp 一票否决(模型过度自信=市场通常是对的);另有同币同向一仓 + 1.5σ 稳健性闸门。
+</div>
+
+<script>
+var D = {"bank":100,"cash":112.22,"invested":0,"mtmSum":0.00,"equity":112.22,"realized":12.22,"wins":2,"losses":0,"updated":"2026-09-22 01:05 UTC","pos":[],"hist":[{"q":"Will the price of Bitcoin be above $84,000 on September 21?","side":"YES","buyPx":0.762,"cost":20,"buyDate":"2026-09-21","endISO":"2026-09-21T16:00:00Z","status":"WON","pnl":6.25},{"q":"Will Ethereum reach $2,800 September 21-27?","side":"YES","buyPx":0.77,"cost":20,"buyDate":"2026-09-21","endISO":"2026-09-28T04:00:00Z","status":"WON","pnl":5.97}]};
+document.getElementById('upd').textContent = D.updated;
+function fmt(n, d){ return Number(n).toLocaleString("en-US", {minimumFractionDigits: d===undefined?2:d, maximumFractionDigits: d===undefined?2:d}); }
+function pct(n, d){ return (n>=0?"+":"") + fmt(n, d===undefined?1:d) + "%"; }
+function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;"); }
+function shortQ(q){ return q.replace(/Will (the price of|Ethereum|Bitcoin) /i, "").replace(/\?$/, ""); }
+function sumWin(){ var s=0; D.pos.forEach(function(p){ s += p.winPay; }); return s; }
+function sumLose(){ var s=0; D.pos.forEach(function(p){ s += p.losePay; }); return -s; }
+function maxRet(){ var m=0; D.pos.forEach(function(p){ if (p.retIfWin>m) m = p.retIfWin; }); return m; }
+function card(k, cls, v, s){ return '<div class="card"><div class="k">'+k+'</div><div class="v '+(cls||"")+'">'+v+'</div><div class="s">'+s+'</div></div>'; }
+
+function recalcSums(){
+  var v = 0;
+  D.pos.forEach(function(p){ if (p.myPx !== null && !isNaN(p.myPx)) v += p.sh * p.myPx; });
+  D.mtmSum = v;
+  D.equity = D.cash + v;
+}
+function renderCards(){
+  var totalRet = 100 * (D.equity / D.bank - 1);
+  document.getElementById('cards').innerHTML = [
+    card("组合净值(纸面)", D.equity>=D.bank?"up":"dn", fmt(D.equity) + " U", "虚拟银行 100 U 起始 · " + pct(totalRet)),
+    card("现金 / 已投入", "", fmt(D.cash) + " / " + fmt(D.invested) + " U", D.pos.length + " 个持仓(上限 5)"),
+    card("持仓市值", D.mtmSum>=D.invested?"up":"dn", fmt(D.mtmSum) + " U", "按实时市场价估值"),
+    card("已结算 胜/负", "", D.wins + " / " + D.losses, "首笔结算:9-18 16:00 UTC"),
+    card("全对了能赚", "up", "+" + fmt(sumWin()) + " U", "若 5 仓全部兑现(小概率)"),
+    card("全错了亏", "dn", fmt(sumLose()) + " U", "若 5 仓全部落空(小概率)")
+  ].join("");
+}
+function renderScen(){
+  var w = sumWin(), l = sumLose();
+  document.getElementById('scen').innerHTML =
+    "<b>组合情景(当前 " + D.pos.length + " 仓,投入 " + fmt(D.invested) + " U):</b>" +
+    "全赢 → 净值 <span class='up'>" + fmt(D.bank + w) + " U(" + pct(100*(D.bank+w)/D.bank-1) + ")</span>;" +
+    "全输 → 净值 <span class='dn'>" + fmt(D.bank - l) + " U(-" + fmt(l) + ")</span>;" +
+    "真实期望介于两者之间,由每个事件的实际概率决定。" +
+    "<b>风险结构:</b>单仓最大亏损固定 20U(已锁),盈利上限不等(最高 " + fmt(maxRet()) + "%)。赔付结构 = 有限亏损 + 高倍数盈利。";
+}
+function renderPos(){
+  var tb = document.querySelector('#posT tbody');
+  if (!D.pos.length){ tb.innerHTML = "<tr><td colspan='13' class='mut'>当前空仓</td></tr>"; return; }
+  tb.innerHTML = D.pos.map(function(p){
+    var cur = p.myPx === null ? NaN : p.myPx;
+    var mtm = isNaN(cur) ? 0 : p.sh * cur - p.cost;
+    p.mtm = mtm;
+    var mtmCls = mtm >= 0 ? "up" : "dn";
+    var endStr = p.endISO.replace("T", " ").replace(":00Z", "");
+    var iso = p.endISO.indexOf("T") >= 0 ? p.endISO : p.endISO.replace(" ", "T");
+    if (iso.charAt(iso.length - 1) !== "Z") iso += "Z";
+    var endMs = new Date(iso).getTime();
+    var msLeft = endMs - Date.now();
+    var p2f = function(n){ return (n < 10 ? "0" : "") + n; };
+    var bj = new Date(endMs + 8 * 3600000);
+    var endStr = p2f(bj.getUTCMonth() + 1) + "-" + p2f(bj.getUTCDate()) + " " + p2f(bj.getUTCHours()) + ":" + p2f(bj.getUTCMinutes()) + " 北京";
+    var dL = Math.floor(msLeft / 86400000), hL = Math.floor((msLeft % 86400000) / 3600000), mL = Math.floor((msLeft % 3600000) / 60000);
+    var days = msLeft <= 0 ? "已到期" : (dL > 0 ? "剩 " + dL + "天" + hL + "时" + mL + "分" : "剩 " + hL + "时" + mL + "分");
+    var bePct = (p.buyPx * 100).toFixed(1);
+    var barHtml = isNaN(cur) ? "—" :
+      '<span class="bar"><i style="width:' + (cur*100).toFixed(0) + '%;background:' + (cur >= p.buyPx ? 'var(--green)' : 'var(--red)') + '"></i></span> ' + (cur*100).toFixed(0) + "%";
+    var statusHtml = "—";
+    if (!isNaN(cur)) {
+      if (cur >= 0.95) statusHtml = "<span class='up' style='font-size:15px'><b>✓ 已基本锁定</b></span>";
+      else if (cur <= 0.05) statusHtml = "<span class='dn' style='font-size:15px'><b>✗ 基本落空</b></span>";
+      else statusHtml = "<span class='mut'>进行中</span>";
+    }
+    return "<tr><td class='l'><b>" + esc(shortQ(p.q)) + "</b><br><span class='mut' style='font-size:11px'>" + esc(p.q) + "</span></td>" +
+      "<td class='" + (p.side==="YES"?"up":"dn") + "'><b>" + p.side + "</b></td>" +
+      "<td>" + p.buyPx.toFixed(3) + "</td><td>" + fmt(p.sh, 1) + "</td><td>" + fmt(p.cost) + " U</td>" +
+      "<td>" + endStr + "<br><span class='mut' style='font-size:11px'>" + days + "</span></td>" +
+      "<td>" + (isNaN(cur) ? "—" : cur.toFixed(3)) + "</td>" +
+      "<td class='" + mtmCls + "'>" + (mtm>=0?"+":"") + fmt(mtm) + " U</td>" +
+      "<td class='l'>" + statusHtml + "</td>" +
+      "<td class='up'>+" + fmt(p.winPay) + " U(" + pct(p.retIfWin, 0) + ")</td>" +
+      "<td class='dn'>" + fmt(p.losePay) + " U(-100%)</td>" +
+      "<td>" + bePct + "%</td>" +
+      "<td>" + barHtml + "</td></tr>";
+  }).join("");
+}
+
+// settled history ledger (static - only changes when the bat runs)
+var htb = document.querySelector('#histT tbody');
+if (!D.hist || !D.hist.length) {
+  htb.innerHTML = "<tr><td colspan='9' class='mut'>还没有已结算的仓位</td></tr>";
+} else {
+  var cum = 0;
+  var hrows = D.hist.map(function(h){
+    cum += h.pnl;
+    var resHtml = h.status === "WON" ? "<span class='up'><b>✓ 兑付</b></span>" :
+      (h.status === "LOST" ? "<span class='dn'><b>✗ 落空</b></span>" : "<span class='mut'>" + h.status + "</span>");
+    var endStr = "—";
+    if (h.endISO) {
+      var hiso = h.endISO.indexOf("T") >= 0 ? h.endISO : h.endISO.replace(" ", "T");
+      if (hiso.charAt(hiso.length - 1) !== "Z") hiso += "Z";
+      var hms = new Date(hiso).getTime();
+      if (!isNaN(hms)) {
+        var hbj = new Date(hms + 8 * 3600000);
+        var hp2 = function(n){ return (n < 10 ? "0" : "") + n; };
+        endStr = hp2(hbj.getUTCMonth() + 1) + "-" + hp2(hbj.getUTCDate()) + " " + hp2(hbj.getUTCHours()) + ":" + hp2(hbj.getUTCMinutes()) + " 北京";
+      }
+    }
+    return "<tr><td class='l'>" + esc(shortQ(h.q)) + "<br><span class='mut' style='font-size:11px'>" + esc(h.q) + "</span></td>" +
+      "<td class='" + (h.side === "YES" ? "up" : "dn") + "'>" + h.side + "</td>" +
+      "<td>" + h.buyPx.toFixed(3) + "</td><td>" + fmt(h.cost) + " U</td>" +
+      "<td>" + h.buyDate + "</td><td>" + endStr + "</td>" +
+      "<td class='l'>" + resHtml + "</td>" +
+      "<td class='" + (h.pnl >= 0 ? "up" : "dn") + "'><b>" + (h.pnl >= 0 ? "+" : "") + fmt(h.pnl) + " U</b></td>" +
+      "<td class='" + (cum >= 0 ? "up" : "dn") + "'>" + (cum >= 0 ? "+" : "") + fmt(cum) + " U</td></tr>";
+  }).join("");
+  htb.innerHTML = hrows;
+}
+
+// ===== live price refresh (gamma public API, browser-direct) =====
+var liveOk = null, liveErr = "";
+function setBadge(){
+  var b = document.getElementById('liveBadge');
+  if (liveOk) b.innerHTML = "实时价 <span class='up'>" + liveOk.toLocaleTimeString("zh-CN") + "</span>" + (liveErr ? " <span class='dn'>(本次失败,显示上次)</span>" : "");
+  else b.innerHTML = liveErr ? "<span class='dn'>实时价不可达:" + liveErr + "</span>" : "实时价格加载中…";
+}
+function pmLiveOne(p){
+  return fetch("https://gamma-api.polymarket.com/markets?id=" + p.id, { cache: "no-cache" })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      var m = j && j.data && j.data[0];
+      if (!m) throw new Error("market " + p.id + " gone");
+      var outs = [], prcs = [];
+      try { outs = JSON.parse(m.outcomes || "[]"); prcs = JSON.parse(m.outcomePrices || "[]"); } catch (e) {}
+      var idx = -1;
+      for (var i = 0; i < outs.length; i++){
+        var o = String(outs[i]).toLowerCase();
+        if ((p.side === "YES" && o === "yes") || (p.side === "NO" && o === "no")) { idx = i; break; }
+      }
+      if (idx < 0 || prcs[idx] === undefined) throw new Error("no price");
+      p.myPx = parseFloat(prcs[idx]);
+    });
+}
+function pmLiveAll(){
+  if (!D.pos.length) return;
+  var jobs = D.pos.map(function(p){
+    return pmLiveOne(p).catch(function(e){ /* keep last price for this one */ });
+  });
+  Promise.all(jobs).then(function(){
+    recalcSums(); renderCards(); renderPos();
+    liveOk = new Date(); liveErr = ""; setBadge();
+  }).catch(function(e){ liveErr = "" + (e.message || e); setBadge(); });
+  setTimeout(function(){ if (!liveOk) { liveErr = "超时"; setBadge(); } }, 20000);
+}
+recalcSums(); renderCards(); renderScen(); renderPos(); setBadge();
+pmLiveAll();
+setInterval(pmLiveAll, 45000);
+</script>
+</body>
+</html>
